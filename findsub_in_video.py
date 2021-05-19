@@ -10,34 +10,31 @@ from functools import reduce
 from termcolor import colored
 from subprocess import PIPE, Popen
 
-TESSERACT_LNG = "hrv"
-DETECTION_TYPE = 0
+TESSERACT_LNG = "hrv"   # Default tesseract language to use. Change to eng for english or use cmd switch -l
+DETECTION_TYPE = 0      # Detection methods, 0 is total diff, 1 is more selective, cmd switch -d
 DETECTION_TYPE_TEXT = "detection based on Total percentage changed"
 
 # GENERAL VIDEO VARIABLES
-frames = 0
-START_FRAME = 0
-progress_bar = ""
-OUTPUT_FILE = ""
+frames = 0              # variable that holds total number of frames processed
+START_FRAME = 0         # Start from which frame, use cmd switch -s
+OUTPUT_FILE = ""        # Write subtitle to what file. Add using cmd switch -o
 (W, H) = (None, None)
 
 # SUBTITLE POSITION IN VIDEO
-TEXT_TOP = 425
-TEXT_BOTTOM = 600
-TEXT_LEFT = 5
-TEXT_RIGHT = 700
-diff_old = 0
-found_start = False
-found_end = False
-found_start_frame = 0
-found_end_frame = 0
-no_contours = 0
-old_no_contours = 0
-count_subtitles = 0
-(x, y, w, h) = (0, 0, 0, 0)
+TEXT_TOP = 425          # top default value to start CROP, use cmd switch -p to set 
+TEXT_BOTTOM = 600       # bottom default value to start CROP
+TEXT_LEFT = 5           # left default value to start CROP
+TEXT_RIGHT = 700        # right default value to start CROP
+found_start = False     # found start of subtitle
+found_end = False       # found end of subtitle
+found_start_frame = 0   # subtitle found at frame
+found_end_frame = 0     # subtitle end found at frame 
+count_subtitles = 0     # Current subtitle number
+no_contours = 0         # how many contours are visible on screen that are big enough to contain subtitle
+(x, y, w, h) = (0, 0, 0, 0) # misc attributes for contours
 
-
-def update_progress(progress, total):
+# Provides console progress bar
+def update_progress(progress, total): 
     percents = 100 * (progress / float(total))
     filled_length = int(round(100 * progress / float(total)))
     sys.stdout.write('\r[\033[1;34mINFO\033[0;0m] [\033[0;32m{0}\033[0;0m] Progress:{1}%'.format('#'* int(filled_length/5), filled_length))
@@ -45,6 +42,7 @@ def update_progress(progress, total):
         sys.stdout.write('\n')
     sys.stdout.flush()
 
+# Execute cmd in shell and returns output
 def cmdline(command):
     process = Popen(
         args=command,
@@ -53,10 +51,10 @@ def cmdline(command):
     )
     return process.communicate()[0]
 
+# functions used to calculate time from frames
 def update_time(seconds):
     rediv = lambda ll,b : list(divmod(ll[0],b)) + ll[1:]
     return "%d:%02d:%02d,%03d" % tuple(reduce(rediv,[[seconds*1000,],1000,60,60]))
-
 
 def get_sec(time_str):
     h, m, s = time_str.split(':')
@@ -109,16 +107,16 @@ print ("[" + colored("INFO", 'blue') +"] Video FPS: " + colored(str(fps), 'green
 cap.set(cv2.CAP_PROP_POS_FRAMES,START_FRAME * fps)
 print ("[" + colored("INFO", 'blue') +"] Start Time (s): " + colored(str(START_FRAME * fps), 'green'))
 
-ret, current_frame = cap.read()
-height_frame, width_frame = current_frame.shape[:2]
+ret, current_frame = cap.read() # Read first frame
+height_frame, width_frame = current_frame.shape[:2] # get height and width of video, not used except to show the info 
 
-found_image = current_frame.copy()
-found_image = found_image[TEXT_TOP:TEXT_BOTTOM, TEXT_LEFT:TEXT_RIGHT] 
-found_image = imutils.resize(found_image, width=1000)
-buffer_text_frame = cv2.cvtColor(found_image, cv2.COLOR_BGR2GRAY)
-
-difference = current_frame
-next_frame = found_image
+# All of this should be revisited what is needed and what not. 
+found_image = current_frame.copy() # Init found image variable 
+found_image = found_image[TEXT_TOP:TEXT_BOTTOM, TEXT_LEFT:TEXT_RIGHT]  # Crop frame
+found_image = imutils.resize(found_image, width=1000) # resize so we have uniform size moving forward
+buffer_text_frame = cv2.cvtColor(found_image, cv2.COLOR_BGR2GRAY) # init buffer variable and make it grayscale
+difference = current_frame # init difference variable to current frame 
+next_frame = found_image # init next frame variable 
 
 print ("[" + colored("INFO", 'blue') +"] Video Size: " + colored(str(width_frame) + ":" + str(height_frame), 'green'))
 print ("[" + colored("INFO", 'blue') +"] Threshold: " + colored(str(SCEME_CHANGE) + "%",'green'))
@@ -137,47 +135,50 @@ sys.stdout.write('\n')
 
 # loop over frames from the video stream
 while(cap.isOpened()):
-    ret, current_frame = cap.read()
-    if current_frame is None:
+    ret, current_frame = cap.read() # Read next frame, prior read was to init variables
+    if current_frame is None: # if there is frame continue if not break 
         print ("[" + colored("INFO", 'red') +"] Press q to quit")
         break
 
-    cv2.imshow("Original", current_frame)
-	# resize the frame, maintaining the aspect ratio
+    cv2.imshow("Original", current_frame) # Shows original video without and modifications
+	
+    # resize the frame, maintaining the aspect ratio
     current_frame = current_frame[TEXT_TOP:TEXT_BOTTOM, TEXT_LEFT:TEXT_RIGHT] 
     current_frame = imutils.resize(current_frame, width=1000)
 
     if W is None or H is None:
         (H, W) = current_frame.shape[:2]
 
-    blank = np.zeros((H, W, 1), np.uint8)
+    blank = np.zeros((H, W, 1), np.uint8) # Create blank image to be used at subtitle detection end to clear text enhancment buffer
 
-    grayA = cv2.cvtColor(current_frame, cv2.COLOR_BGR2GRAY)
+    grayA = cv2.cvtColor(current_frame, cv2.COLOR_BGR2GRAY) # Convert current frame to grayscale
 #    grayA = cv2.GaussianBlur(grayA,(55,55),0)
 
-    grayB = cv2.cvtColor(next_frame, cv2.COLOR_BGR2GRAY)
+    grayB = cv2.cvtColor(next_frame, cv2.COLOR_BGR2GRAY) # Convert next frame to grayscale
 #    grayB = cv2.GaussianBlur(grayB,(55,55),0)
 
-    template_diff = cv2.matchTemplate(grayA, grayB, cv2.TM_CCOEFF_NORMED)
-    template_diff = abs(template_diff - 1)
+    template_diff = cv2.matchTemplate(grayA, grayB, cv2.TM_CCOEFF_NORMED) # Compare two frames using one frame as a template, used in second detection method
+    template_diff = abs(template_diff - 1) # convert to percentage
 
-    grayB = cv2.bitwise_not(grayB)
-    difference = cv2.subtract(grayA, grayB)
+    # Main Part of background removal
+    grayB = cv2.bitwise_not(grayB) # invert next frame 
+    difference = cv2.subtract(grayA, grayB) # Combine current frame and inverted next frame which removes background and only stationary pixels get selected
+    diff = (cv2.countNonZero(difference) / float(W * H)) * 100 # Calculate percentage of change over entire cropped region
+
+    # Part to remove any non white artefacts and find contours
     ret,thresh4 = cv2.threshold(difference,100,255,cv2.THRESH_BINARY)
     blurred = cv2.GaussianBlur(thresh4, (25, 25), 0)
     ret, gray = cv2.threshold(blurred, 0 , 255, cv2.CHAIN_APPROX_NONE)
 
-    kernel = np.ones((15,15), np.uint8)
-    gray = cv2.dilate(gray, kernel)
-    gray = cv2.bitwise_not(gray)
+    kernel = np.ones((15,15), np.uint8) 
+    gray = cv2.dilate(gray, kernel) # Blow up text to make it easier to select contours of individual words instead of letters
+    gray = cv2.bitwise_not(gray) # Invert Image before looking for contours
 
-    contours, hierarchy = cv2.findContours(gray, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)[-2:]
-    image_contour = np.copy(current_frame)
-    cv2.drawContours(image_contour, contours, -1, (0, 255, 0), 2, cv2.LINE_AA, maxLevel=1)
+    contours, hierarchy = cv2.findContours(gray, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)[-2:] # Find contours and remove third dimension of array
+    image_contour = np.copy(current_frame) # Create temp image
+    cv2.drawContours(image_contour, contours, -1, (0, 255, 0), 2, cv2.LINE_AA, maxLevel=1) # Draw contours on temp image
 
-
-    diff = (cv2.countNonZero(difference) / float(W * H)) * 100
-    cv2.putText(gray,"Diff Total:" +str("%5.2f" % diff) + "% -> Diff Contour:"+ str("%5.2f" % (template_diff*10)) + "%", (10,10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255,255,255), 2)
+    cv2.putText(gray,"Diff Total:" +str("%5.2f" % diff) + "% -> Diff Contour:"+ str("%5.2f" % (template_diff*10)) + "%", (10,10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255,255,255), 2) 
 
     if DETECTION_TYPE == 0:
         if not found_start and diff >= SCEME_CHANGE:
